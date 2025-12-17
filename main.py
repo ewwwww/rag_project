@@ -3,70 +3,8 @@ RAG 系统主入口文件
 """
 import os
 import argparse
-from PyPDF2 import PdfReader
-from data_process import (
-    extract_text_with_page_numbers,
-    process_text_with_splitter,
-    load_knowledge_base
-)
-from user_query import user_query
-
-
-def initialize_knowledge_base(pdf_path: str, vector_store_path: str):
-    """
-    初始化知识库（向量数据库）
-    
-    参数:
-        pdf_path: PDF文件路径
-        vector_store_path: 向量数据库保存路径
-    
-    返回:
-        knowledge_base: FAISS向量数据库对象
-    """
-    # 检查向量数据库是否已存在
-    if os.path.exists(vector_store_path) and os.path.exists(os.path.join(vector_store_path, 'index.faiss')):
-        print("检测到已存在的向量数据库，正在加载...")
-        knowledge_base = load_knowledge_base(vector_store_path)
-    else:
-        print("未找到向量数据库，开始处理PDF文件...")
-        # 读取PDF文件
-        pdf_reader = PdfReader(pdf_path)
-        
-        # 提取文本和页码信息
-        text, page_numbers = extract_text_with_page_numbers(pdf_reader)
-        print(f"已从PDF提取文本，共 {len(text)} 个字符。")
-        
-        # 处理文本并创建向量存储
-        knowledge_base = process_text_with_splitter(
-            text=text,
-            page_numbers=page_numbers,
-            save_path=vector_store_path
-        )
-    
-    print("\n向量数据库准备完成！")
-    return knowledge_base
-
-
-def run_query_mode(query: str, vector_store_path: str = "./vector_store"):
-    """
-    运行查询模式：使用已初始化的知识库进行问答
-    
-    参数:
-        query: 用户查询问题
-        vector_store_path: 向量数据库路径（默认使用 ./vector_store）
-    
-    返回:
-        bool: 查询是否成功执行
-    """
-    try:
-        print(f"\n正在处理查询：{query}")
-        print("-" * 50)
-        user_query(query)
-        print("-" * 50)
-        return True
-    except Exception as e:
-        print(f"❌ 查询处理失败：{e}")
-        return False
+from knowledge_base_manager import initialize_knowledge_base
+from user_query import run_query_mode
 
 
 def main():
@@ -76,22 +14,30 @@ def main():
         description="RAG 系统：文档检索与智能问答",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-    使用示例:
-    # 初始化知识库
-    python main.py --init
-    
-    # 执行查询
-    python main.py --query "客户经理的考核标准是什么？"
-    
-    # 交互式查询模式
-    python main.py --interactive
+     使用示例:
+     # 初始化知识库（首次运行或增量更新）
+     python main.py --init
+     
+     # 强制重新构建向量数据库
+     python main.py --init --force
+     
+     # 执行查询
+     python main.py --query "客户经理的考核标准是什么？"
+     
+     # 连续交互式查询模式（退出：quit/exit/退出）
+     python main.py --interactive
         """
     )
     
     parser.add_argument(
         "--init",
         action="store_true",
-        help="初始化知识库（处理PDF并创建向量数据库）"
+        help="初始化知识库（处理PDF并创建向量数据库，支持增量更新）"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="强制重新构建向量数据库（忽略已处理的文件）"
     )
     parser.add_argument(
         "--query",
@@ -104,10 +50,10 @@ def main():
         help="进入交互式查询模式"
     )
     parser.add_argument(
-        "--pdf-path",
+        "--dataset",
         type=str,
-        default="./dataset/浦发上海浦东发展银行西安分行个金客户经理考核办法.pdf",
-        help="PDF文件路径（默认：./dataset/浦发上海浦东发展银行西安分行个金客户经理考核办法.pdf）"
+        default="./dataset",
+        help="数据集目录路径（默认：./dataset，会处理目录下所有PDF文件）"
     )
     parser.add_argument(
         "--vector-store",
@@ -119,7 +65,7 @@ def main():
     args = parser.parse_args()
     
     # 配置参数
-    pdf_path = args.pdf_path
+    dataset_path = args.dataset
     vector_store_path = args.vector_store
     
     # 如果没有指定任何操作，默认初始化知识库
@@ -132,7 +78,7 @@ def main():
             print("=" * 50)
             print("初始化知识库...")
             print("=" * 50)
-            knowledge_base = initialize_knowledge_base(pdf_path, vector_store_path)
+            knowledge_base = initialize_knowledge_base(dataset_path, vector_store_path, force_rebuild=args.force)
             if knowledge_base is None:
                 print("❌ 知识库初始化失败")
                 return None
