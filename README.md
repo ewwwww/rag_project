@@ -1,4 +1,4 @@
-# RAG技术与应用 - 第2章
+# RAG技术应用
 
 > RAG（Retrieval-Augmented Generation）检索增强生成技术的实践项目
 
@@ -71,7 +71,7 @@ chapter2/
 ├── README.md           # 项目说明文档
 ├── requirements.txt    # 项目依赖列表
 ├── install.py         # 依赖安装说明（注释形式）
-└── rag.py             # RAG 相关代码
+└── rag_tool.py        # RAG 相关代码
 ```
 
 ## ⚙️ 配置说明
