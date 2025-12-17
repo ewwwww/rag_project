@@ -121,9 +121,3 @@ def load_knowledge_base(load_path: str, embeddings = None) -> FAISS:
         print("警告: 未找到页码信息文件。")
     
     return knowledgeBase
-
-# # 读取PDF文件
-# pdf_reader = PdfReader('./dataset/浦发上海浦东发展银行西安分行个金客户经理考核办法.pdf')
-# # 提取文本和页码信息
-# text, page_numbers = extract_text_with_page_numbers(pdf_reader)
-# text
