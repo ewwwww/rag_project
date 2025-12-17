@@ -12,9 +12,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from typing import List, Tuple
 
-def extract_text_with_page_numbers(pdf) -> Tuple[str, List[int]]:
+def extract_text_with_page_numbers(pdf) -> Tuple[str, List[int], List[Tuple[int, int]]]:
     """
-    从PDF中提取文本并记录每行文本对应的页码
+    从PDF中提取文本并记录每行文本对应的页码和字符位置
     
     参数:
         pdf: PDF文件对象
@@ -22,27 +22,43 @@ def extract_text_with_page_numbers(pdf) -> Tuple[str, List[int]]:
     返回:
         text: 提取的文本内容
         page_numbers: 每行文本对应的页码列表
+        line_ranges: 每行文本在原始文本中的字符位置范围列表，格式为[(start, end), ...]
     """
     text = ""
     page_numbers = []
+    line_ranges = []
 
     for page_number, page in enumerate(pdf.pages, start=1):
         extracted_text = page.extract_text()
         if extracted_text:
+            # 记录添加文本前的起始位置
+            text_start_pos = len(text)
+            # 添加当前页的文本
             text += extracted_text
-            page_numbers.extend([page_number] * len(extracted_text.split("\n")))
+            # 按行分割并计算每行的位置
+            lines = extracted_text.split("\n")
+            current_line_start = text_start_pos
+            
+            for i, line in enumerate(lines):
+                line_start = current_line_start
+                line_end = line_start + len(line)
+                line_ranges.append((line_start, line_end))
+                page_numbers.append(page_number)
+                # 下一行的起始位置 = 当前行结束位置 + 1（换行符）
+                current_line_start = line_end + 1
         else:
             logging.warning(f"No text found on page {page_number}.")
 
-    return text, page_numbers
+    return text, page_numbers, line_ranges
 
-def process_text_with_splitter(text: str, page_numbers: List[int], save_path: str = None) -> FAISS:
+def process_text_with_splitter(text: str, page_numbers: List, line_ranges: List[Tuple[int, int]] = None, save_path: str = None) -> FAISS:
     """
     处理文本并创建向量存储
     
     参数:
         text: 提取的文本内容
-        page_numbers: 每行文本对应的页码列表
+        page_numbers: 每行文本对应的页码列表（可以是整数或带文件名的字符串，如"file.pdf:1"）
+        line_ranges: 每行文本在原始文本中的字符位置范围列表，格式为[(start, end), ...]
         save_path: 可选，保存向量数据库的路径
     
     返回:
@@ -69,8 +85,58 @@ def process_text_with_splitter(text: str, page_numbers: List[int], save_path: st
     knowledgeBase = FAISS.from_texts(chunks, embeddings)
     print("已从文本块创建知识库...")
     
-    # 存储每个文本块对应的页码信息
-    page_info = {chunk: page_numbers[i] for i, chunk in enumerate(chunks)}
+    # 根据chunk在原始文本中的位置找到对应的页码
+    page_info = {}
+    search_start = 0  # 用于跟踪查找位置，考虑chunk overlap
+    
+    # 如果line_ranges可用，使用精确的位置映射
+    if line_ranges and len(line_ranges) == len(page_numbers):
+        for chunk in chunks:
+            # 从search_start开始查找chunk（考虑overlap，向前搜索一些位置）
+            search_from = max(0, search_start - 128)  # 128是chunk_overlap大小
+            chunk_start = text.find(chunk, search_from)
+            
+            if chunk_start == -1:
+                # 如果找不到，尝试全局查找
+                chunk_start = text.find(chunk)
+            
+            if chunk_start != -1:
+                # 找到包含chunk起始位置的行
+                page_num = page_numbers[0] if page_numbers else ("未知:1" if page_numbers and isinstance(page_numbers[0], str) else 1)
+                
+                # 二分查找或线性查找包含chunk_start的行
+                for line_idx, (line_start, line_end) in enumerate(line_ranges):
+                    if line_start <= chunk_start <= line_end:
+                        # chunk起始位置在这一行内
+                        page_num = page_numbers[line_idx]
+                        break
+                    elif chunk_start < line_start:
+                        # chunk起始位置在行之前，使用前一行（如果存在）
+                        if line_idx > 0:
+                            page_num = page_numbers[line_idx - 1]
+                        break
+                else:
+                    # chunk超出所有行范围，使用最后一个页码
+                    page_num = page_numbers[-1] if page_numbers else page_num
+                
+                # 更新search_start为当前chunk结束位置（考虑overlap）
+                search_start = chunk_start + len(chunk) - 64  # 减去部分overlap
+            else:
+                # 如果找不到chunk位置，使用默认值
+                page_num = page_numbers[-1] if page_numbers else ("未知:1" if page_numbers and isinstance(page_numbers[0], str) else 1)
+            
+            page_info[chunk] = page_num
+    else:
+        # 回退到旧方法：使用chunk索引映射（不准确，但兼容）
+        for i, chunk in enumerate(chunks):
+            if page_numbers and i < len(page_numbers):
+                page_num = page_numbers[i]
+            elif page_numbers:
+                page_num = page_numbers[-1]
+            else:
+                page_num = "未知:1" if isinstance(page_numbers, list) and page_numbers and isinstance(page_numbers[0], str) else 1
+            page_info[chunk] = page_num
+    
     knowledgeBase.page_info = page_info
 
     # 如果提供了保存路径，则保存向量数据库和页码信息
